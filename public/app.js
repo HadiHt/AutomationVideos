@@ -1,7 +1,13 @@
 const state = {
   app: null,
   selectedJobId: null,
-  pollTimer: null
+  pollTimer: null,
+  videoPlayback: {
+    jobId: null,
+    currentTime: 0,
+    paused: true
+  },
+  lastJobSnapshot: null
 };
 
 async function api(path, options = {}) {
@@ -44,6 +50,57 @@ function setStatus(message) {
 
 function currentJob() {
   return state.app?.jobs?.find((job) => job.id === state.selectedJobId) || state.app?.jobs?.[0] || null;
+}
+
+function getJobSignature(job) {
+  if (!job) {
+    return "";
+  }
+
+  return JSON.stringify({
+    id: job.id,
+    status: job.status,
+    stage: job.stage,
+    progress: job.progress,
+    updatedAt: job.updatedAt,
+    outputPath: job.output?.videoPath || null,
+    error: job.error?.message || null
+  });
+}
+
+function captureVideoPlayback() {
+  const video = document.querySelector("#job-detail video");
+  const job = currentJob();
+  if (!video || !job) {
+    return;
+  }
+
+  state.videoPlayback = {
+    jobId: job.id,
+    currentTime: video.currentTime || 0,
+    paused: video.paused
+  };
+}
+
+function isReviewVideoPlaying() {
+  const video = document.querySelector("#job-detail video");
+  return Boolean(video && !video.paused && !video.ended);
+}
+
+function renderProgress(job) {
+  const progress = Math.max(0, Math.min(100, Number(job.progress || 0)));
+  const label = job.statusMessage || `${job.status} / ${job.stage}`;
+  return `
+    <div class="progress-block">
+      <div class="progress-copy">
+        <strong>${escapeHtml(label)}</strong>
+        <span>${progress}%</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill ${escapeHtml(job.status)}" style="width:${progress}%"></div>
+      </div>
+    </div>
+  `;
 }
 
 function renderAccount() {
@@ -140,6 +197,7 @@ function renderJobs() {
             </div>
             <div class="status-chip ${escapeHtml(job.status)}">${escapeHtml(job.status)} / ${escapeHtml(job.stage)}</div>
           </div>
+          ${renderProgress(job)}
           <div class="job-grid" style="margin-top:14px">
             <div class="meta-card">
               <strong>Scenes</strong>
@@ -173,6 +231,8 @@ function renderJobDetail() {
   const job = currentJob();
   const node = document.getElementById("job-detail");
 
+  captureVideoPlayback();
+
   if (!job) {
     node.innerHTML = "Select a job to review.";
     return;
@@ -200,6 +260,7 @@ function renderJobDetail() {
         <div class="detail-block" style="margin-top:14px">
           <h3>${escapeHtml(job.title)}</h3>
           <div class="status-chip ${escapeHtml(job.status)}">${escapeHtml(job.status)} / ${escapeHtml(job.stage)}</div>
+          ${renderProgress(job)}
           <p class="supporting-copy">Updated ${formatDate(job.updatedAt)}</p>
           <pre>${escapeHtml(job.scriptText || "")}</pre>
         </div>
@@ -212,6 +273,7 @@ function renderJobDetail() {
             <div class="meta-card"><strong>Resolution</strong><div>${job.output?.width || "-"} x ${job.output?.height || "-"}</div></div>
             <div class="meta-card"><strong>FPS</strong><div>${job.output?.fps || "-"}</div></div>
             <div class="meta-card"><strong>Images</strong><div>${job.output?.imageAssets?.length || 0}</div></div>
+            <div class="meta-card"><strong>Scene progress</strong><div>${job.metrics?.generatedScenes ?? 0} / ${job.metrics?.totalScenes ?? job.scenes?.length ?? 0}</div></div>
           </div>
         </div>
         <div class="detail-block">
@@ -240,6 +302,37 @@ function renderJobDetail() {
       </div>
     </div>
   `;
+
+  const video = node.querySelector("video");
+  if (video) {
+    const playback = state.videoPlayback;
+    if (playback.jobId === job.id) {
+      video.addEventListener(
+        "loadedmetadata",
+        () => {
+          if (playback.currentTime > 0) {
+            video.currentTime = Math.min(playback.currentTime, Math.max(0, video.duration || playback.currentTime));
+          }
+          if (!playback.paused) {
+            video.play().catch(() => {});
+          }
+        },
+        { once: true }
+      );
+    }
+
+    const syncPlayback = () => {
+      state.videoPlayback = {
+        jobId: job.id,
+        currentTime: video.currentTime || 0,
+        paused: video.paused
+      };
+    };
+
+    video.addEventListener("timeupdate", syncPlayback);
+    video.addEventListener("pause", syncPlayback);
+    video.addEventListener("play", syncPlayback);
+  }
 }
 
 function syncPublishForm() {
@@ -304,15 +397,25 @@ function renderPublishHistory() {
 }
 
 async function refreshState() {
+  const previousJob = currentJob();
+  const previousSignature = getJobSignature(previousJob);
+  const preservePlayingVideo = isReviewVideoPlaying();
   const appState = await api("/api/state");
   state.app = appState;
   if (!state.selectedJobId && appState.jobs?.length) {
     state.selectedJobId = appState.jobs[0].id;
   }
+  const nextJob = currentJob();
+  const nextSignature = getJobSignature(nextJob);
   setStatus(`App state synced at ${new Date().toLocaleTimeString()}`);
   renderAccount();
   renderJobs();
-  renderJobDetail();
+  if (!(preservePlayingVideo && previousJob?.id === nextJob?.id && previousJob?.status === "completed" && nextJob?.status === "completed")) {
+    if (previousSignature !== nextSignature || state.lastJobSnapshot !== nextSignature) {
+      renderJobDetail();
+      state.lastJobSnapshot = nextSignature;
+    }
+  }
   syncPublishForm();
   renderPublishHistory();
 }

@@ -8,3 +8,4 @@ images/
 temp/
 __pycache__/
 *.pyc
+voices/

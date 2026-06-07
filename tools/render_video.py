@@ -7,6 +7,10 @@ from moviepy.audio.fx.all import audio_loop
 from moviepy.editor import AudioFileClip, CompositeAudioClip, CompositeVideoClip, ImageClip, concatenate_videoclips
 import moviepy.video.fx.all as vfx
 
+if not hasattr(Image, "ANTIALIAS") and hasattr(Image, "Resampling"):
+    # MoviePy 1.x still references Image.ANTIALIAS on newer Pillow releases.
+    Image.ANTIALIAS = Image.Resampling.LANCZOS
+
 
 def load_manifest(path):
     with open(path, "r", encoding="utf-8") as handle:

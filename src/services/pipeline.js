@@ -62,6 +62,47 @@ function buildCaptionChunks(text, wordsPerChunk) {
   return chunks;
 }
 
+function buildCaptionTimeline(chunks, audioDurationSec) {
+  if (!chunks.length || audioDurationSec <= 0) {
+    return [];
+  }
+
+  const weightedChunks = chunks.map((text) => {
+    const words = text.split(/\s+/).filter(Boolean);
+    const characters = text.replace(/\s+/g, "").length;
+    return {
+      text,
+      weight: Math.max(1, words.length * 1.15 + characters * 0.035)
+    };
+  });
+
+  const totalWeight = weightedChunks.reduce((sum, chunk) => sum + chunk.weight, 0);
+  const leadInSec = 0.08;
+  const endHoldSec = 0.24;
+  const maxEnd = Math.max(audioDurationSec, 0.1);
+  let cursor = leadInSec;
+
+  return weightedChunks.map((chunk, index) => {
+    const rawDuration = (chunk.weight / totalWeight) * maxEnd;
+    const duration = Math.max(0.9, rawDuration + endHoldSec);
+    const startSec = index === 0 ? 0 : Math.max(0, cursor - 0.04);
+    let endSec = Math.min(maxEnd, startSec + duration);
+
+    if (index === weightedChunks.length - 1) {
+      endSec = maxEnd;
+    }
+
+    cursor = endSec;
+
+    return {
+      index,
+      text: chunk.text,
+      startSec: Number(startSec.toFixed(3)),
+      endSec: Number(endSec.toFixed(3))
+    };
+  });
+}
+
 function wavDurationSeconds(buffer) {
   if (buffer.length < 44 || buffer.toString("ascii", 0, 4) !== "RIFF" || buffer.toString("ascii", 8, 12) !== "WAVE") {
     throw new Error("Generated Piper output is not a valid WAV file.");
@@ -105,6 +146,9 @@ export class PipelineService {
       title: normalizedTitle,
       status: "queued",
       stage: "queued",
+      progress: 0,
+      statusMessage: "Waiting to start",
+      metrics: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       scriptText,
@@ -142,7 +186,13 @@ export class PipelineService {
     }
 
     try {
-      await this.updateJob(jobId, { status: "running", stage: "preparing", error: null });
+      await this.updateJob(jobId, {
+        status: "running",
+        stage: "preparing",
+        progress: 5,
+        statusMessage: "Preparing job workspace",
+        error: null
+      });
       await ensureDir(job.workDir);
       await ensureDir(path.join(job.workDir, "audio"));
       await ensureDir(path.join(job.workDir, "images"));
@@ -165,26 +215,39 @@ export class PipelineService {
       }));
 
       const captions = buildCaptionChunks(job.scriptText, this.config.pipeline.captionWordsPerChunk);
-      await this.updateJob(jobId, { stage: "voiceover", scenes, prompts: scenes.map((scene) => scene.prompt), captions });
+      await this.updateJob(jobId, {
+        stage: "voiceover",
+        progress: 15,
+        statusMessage: "Generating narration with Piper",
+        scenes,
+        prompts: scenes.map((scene) => scene.prompt),
+        captions,
+        metrics: {
+          totalScenes: scenes.length,
+          generatedScenes: 0
+        }
+      });
 
       const audioPath = path.join(job.workDir, "audio", "voice.wav");
       await this.generateVoiceover(job.scriptText, audioPath);
       const audioBuffer = await fs.readFile(audioPath);
       const audioDurationSec = wavDurationSeconds(audioBuffer);
 
-      await this.updateJob(jobId, { stage: "images" });
+      await this.updateJob(jobId, {
+        stage: "images",
+        progress: 25,
+        statusMessage: `Generating scene 1 of ${scenes.length} in ComfyUI`
+      });
       const imageAssets = await this.generateImages(job, scenes);
 
       const perSceneDurationSec = audioDurationSec / Math.max(1, scenes.length);
-      const captionDurationSec = audioDurationSec / Math.max(1, captions.length);
-      const captionTimeline = captions.map((text, index) => ({
-        index,
-        text,
-        startSec: Number((index * captionDurationSec).toFixed(3)),
-        endSec: Number(Math.min(audioDurationSec, (index + 1) * captionDurationSec).toFixed(3))
-      }));
+      const captionTimeline = buildCaptionTimeline(captions, audioDurationSec);
 
-      await this.updateJob(jobId, { stage: "render" });
+      await this.updateJob(jobId, {
+        stage: "render",
+        progress: 78,
+        statusMessage: "Rendering video with MoviePy and FFmpeg"
+      });
       const manifestPath = path.join(job.workDir, "output", "render-manifest.json");
       const videoPath = path.join(job.workDir, "output", "final_tiktok.mp4");
       const metadataPath = path.join(job.workDir, "output", "render-metadata.json");
@@ -213,7 +276,7 @@ export class PipelineService {
       };
       await writeJsonFile(manifestPath, manifest);
 
-      await this.renderVideo({ manifestPath, videoPath, metadataPath, cwd: job.workDir });
+      await this.renderVideo({ manifestPath, videoPath, metadataPath, cwd: job.workDir, jobId });
 
       const metadata = await readJsonFile(metadataPath);
       const output = {
@@ -228,11 +291,21 @@ export class PipelineService {
         imageAssets
       };
 
-      await this.updateJob(jobId, { status: "completed", stage: "completed", output, scenes, captions: captionTimeline });
+      await this.updateJob(jobId, {
+        status: "completed",
+        stage: "completed",
+        progress: 100,
+        statusMessage: "Video is ready for review and publish",
+        output,
+        scenes,
+        captions: captionTimeline
+      });
     } catch (error) {
       await this.updateJob(jobId, {
         status: "failed",
         stage: "failed",
+        progress: 100,
+        statusMessage: "Generation failed",
         error: {
           message: error.message,
           stack: error.stack
@@ -272,6 +345,16 @@ export class PipelineService {
     const imageAssets = [];
 
     for (const scene of scenes) {
+      await this.updateJob(job.id, {
+        stage: "images",
+        progress: Math.min(74, 25 + Math.round((scene.index / Math.max(1, scenes.length)) * 45)),
+        statusMessage: `Generating scene ${scene.index + 1} of ${scenes.length} in ComfyUI`,
+        metrics: {
+          totalScenes: scenes.length,
+          generatedScenes: scene.index
+        }
+      });
+
       const seed = crypto.randomInt(1, 2 ** 31);
       const promptGraph = deepReplace(workflow, {
         "{{prompt}}": scene.prompt,
@@ -316,6 +399,16 @@ export class PipelineService {
         promptId,
         imagePath
       });
+
+      await this.updateJob(job.id, {
+        stage: "images",
+        progress: Math.min(75, 25 + Math.round(((scene.index + 1) / Math.max(1, scenes.length)) * 45)),
+        statusMessage: `Generated scene ${scene.index + 1} of ${scenes.length}`,
+        metrics: {
+          totalScenes: scenes.length,
+          generatedScenes: scene.index + 1
+        }
+      });
     }
 
     return imageAssets;
@@ -350,16 +443,36 @@ export class PipelineService {
     return null;
   }
 
-  async renderVideo({ manifestPath, videoPath, metadataPath, cwd }) {
+  async renderVideo({ manifestPath, videoPath, metadataPath, cwd, jobId }) {
     if (!(await fileExists(this.config.paths.rendererScriptPath))) {
       throw new Error(`Renderer script not found at ${this.config.paths.rendererScriptPath}.`);
     }
 
-    await runCommand(
-      this.config.pipeline.rendererPythonExecutable,
-      [this.config.paths.rendererScriptPath, "--manifest", manifestPath, "--output", videoPath, "--metadata", metadataPath],
-      { cwd }
-    );
+    const interval = setInterval(async () => {
+      try {
+        if (await fileExists(videoPath)) {
+          const stats = await fs.stat(videoPath);
+          const estimatedProgress = Math.min(96, 78 + Math.round(Math.min(1, stats.size / 12_000_000) * 18));
+          await this.updateJob(jobId, {
+            stage: "render",
+            progress: estimatedProgress,
+            statusMessage: `Rendering video (${(stats.size / 1024 / 1024).toFixed(1)} MB written)`
+          });
+        }
+      } catch {
+        // Ignore transient stat failures while the renderer is creating the file.
+      }
+    }, 2000);
+
+    try {
+      await runCommand(
+        this.config.pipeline.rendererPythonExecutable,
+        [this.config.paths.rendererScriptPath, "--manifest", manifestPath, "--output", videoPath, "--metadata", metadataPath],
+        { cwd }
+      );
+    } finally {
+      clearInterval(interval);
+    }
 
     if (!(await fileExists(videoPath))) {
       throw new Error("Renderer did not produce the final MP4 file.");
@@ -375,6 +488,7 @@ export const pipelineInternals = {
   splitIntoSentences,
   buildSceneChunks,
   buildCaptionChunks,
+  buildCaptionTimeline,
   wavDurationSeconds,
   deepReplace
 };

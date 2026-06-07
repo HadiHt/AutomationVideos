@@ -26,6 +26,18 @@ test("caption chunking groups words into readable slices", () => {
   assert.deepEqual(captions, ["In 1919 a small", "village woke up to", "total silence"]);
 });
 
+test("caption timeline keeps later captions on screen proportionally to text length", () => {
+  const timeline = pipelineInternals.buildCaptionTimeline(
+    ["Short line", "This caption chunk is meaningfully longer", "End"],
+    9
+  );
+
+  assert.equal(timeline.length, 3);
+  assert.equal(timeline[0].startSec, 0);
+  assert.ok(timeline[1].endSec - timeline[1].startSec > timeline[0].endSec - timeline[0].startSec);
+  assert.equal(timeline[2].endSec, 9);
+});
+
 test("deepReplace injects prompt and dimensions into a workflow tree", () => {
   const workflow = {
     prompt: "{{prompt}}",

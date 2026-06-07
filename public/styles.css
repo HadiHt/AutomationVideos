@@ -253,6 +253,42 @@ textarea {
   cursor: pointer;
 }
 
+.progress-block {
+  margin-top: 14px;
+}
+
+.progress-copy {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  font-size: 0.94rem;
+  color: var(--ink-soft);
+}
+
+.progress-track {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(88, 54, 15, 0.12);
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #d07d1a 0%, #bc4b1b 60%, #8e2f0c 100%);
+  transition: width 220ms ease;
+}
+
+.progress-fill.completed {
+  background: linear-gradient(90deg, #4f9858 0%, #295c39 100%);
+}
+
+.progress-fill.failed {
+  background: linear-gradient(90deg, #cc4b50 0%, #8e1f23 100%);
+}
+
 .job-card.active {
   border-color: rgba(188, 75, 27, 0.5);
   box-shadow: inset 0 0 0 1px rgba(188, 75, 27, 0.35);
