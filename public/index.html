@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Automation Videos</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Local TikTok Direct Post Studio</p>
+          <h1>Generate, review, and publish vertical videos from one localhost app.</h1>
+        </div>
+        <div class="hero-notes">
+          <p>Built for a single self-use TikTok account with explicit consent, creator-aware publish settings, and local media generation.</p>
+          <div class="status-pill" id="server-status">Loading app state...</div>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="panel panel-account">
+          <div class="panel-header">
+            <div>
+              <p class="section-label">1. Connect TikTok</p>
+              <h2>Account and creator capabilities</h2>
+            </div>
+            <div class="panel-actions">
+              <button class="ghost-button" id="refresh-creator-info">Refresh creator info</button>
+              <a class="primary-button" href="/api/tiktok/connect">Connect TikTok</a>
+            </div>
+          </div>
+          <div id="account-card" class="account-card"></div>
+        </section>
+
+        <section class="panel panel-create">
+          <div class="panel-header">
+            <div>
+              <p class="section-label">2. Create Video</p>
+              <h2>Script to TikTok-ready MP4</h2>
+            </div>
+          </div>
+          <form id="generate-form" class="stack-form">
+            <label>
+              <span>Video title</span>
+              <input id="title-input" name="title" type="text" maxlength="120" placeholder="Example: The clock that stopped a village">
+            </label>
+            <label>
+              <span>Script</span>
+              <textarea id="script-input" name="scriptText" rows="10" placeholder="Paste the full narration script here."></textarea>
+            </label>
+            <button class="primary-button" type="submit">Generate Video</button>
+          </form>
+          <p class="supporting-copy">The backend will split scenes, call Piper, generate ComfyUI images, compose the MP4, and persist the finished assets for review and publish.</p>
+        </section>
+
+        <section class="panel panel-jobs">
+          <div class="panel-header">
+            <div>
+              <p class="section-label">3. Review Jobs</p>
+              <h2>Recent generation runs</h2>
+            </div>
+          </div>
+          <div id="jobs-list" class="job-list"></div>
+        </section>
+
+        <section class="panel panel-review">
+          <div class="panel-header">
+            <div>
+              <p class="section-label">4. Review and Consent</p>
+              <h2>Preview, inspect prompts, and prepare publish settings</h2>
+            </div>
+          </div>
+          <div id="job-detail" class="job-detail empty-state">Select a job to review its render, prompts, captions, and publish readiness.</div>
+        </section>
+
+        <section class="panel panel-publish">
+          <div class="panel-header">
+            <div>
+              <p class="section-label">5. Direct Publish</p>
+              <h2>TikTok post settings</h2>
+            </div>
+          </div>
+          <form id="publish-form" class="stack-form">
+            <label>
+              <span>Post title / caption</span>
+              <input id="publish-title" name="title" type="text" maxlength="2200" placeholder="Editable title, hashtags, or mentions">
+            </label>
+            <label>
+              <span>Privacy level</span>
+              <select id="privacy-level" name="privacyLevel">
+                <option value="">Choose a privacy level manually</option>
+              </select>
+            </label>
+            <div class="toggle-grid">
+              <label class="toggle">
+                <input id="disable-comment" type="checkbox">
+                <span>Disable comments</span>
+              </label>
+              <label class="toggle">
+                <input id="disable-duet" type="checkbox">
+                <span>Disable duet</span>
+              </label>
+              <label class="toggle">
+                <input id="disable-stitch" type="checkbox">
+                <span>Disable stitch</span>
+              </label>
+            </div>
+            <label class="consent">
+              <input id="consent-checkbox" type="checkbox">
+              <span>I explicitly consent to upload this video from this app to TikTok now.</span>
+            </label>
+            <label class="consent">
+              <input id="visibility-checkbox" type="checkbox">
+              <span>I understand unaudited clients may publish only to private visibility during testing.</span>
+            </label>
+            <div class="publish-notes">
+              <p>TikTok requires manual privacy selection and editable preset text.</p>
+              <p>After publishing, moderation and processing can delay visibility by a few minutes or longer.</p>
+            </div>
+            <button class="primary-button" id="publish-button" type="submit">Publish to TikTok</button>
+          </form>
+          <div id="publish-feedback" class="publish-feedback"></div>
+        </section>
+
+        <section class="panel panel-history">
+          <div class="panel-header">
+            <div>
+              <p class="section-label">6. Publish History</p>
+              <h2>Status polling results</h2>
+            </div>
+          </div>
+          <div id="publish-history" class="history-list"></div>
+        </section>
+      </main>
+    </div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

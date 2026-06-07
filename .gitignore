@@ -1,0 +1,10 @@
+node_modules/
+.env
+data/state.json
+data/runtime/
+output/
+audio/
+images/
+temp/
+__pycache__/
+*.pyc
