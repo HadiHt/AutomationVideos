@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { JsonStore } from "../src/store.js";
-import { TiktokService } from "../src/services/tiktok.js";
+import { createVideoUploadPlan, TiktokService } from "../src/services/tiktok.js";
 
 function makeConfig() {
   return {
@@ -38,4 +38,29 @@ test("authorization URL includes PKCE parameters for desktop mode", async () => 
   assert.equal(url.searchParams.get("scope"), "user.info.basic,video.publish");
   assert.equal(url.searchParams.get("code_challenge_method"), "S256");
   assert.ok(url.searchParams.get("code_challenge"));
+});
+
+test("small and medium TikTok videos upload as one whole chunk", () => {
+  assert.deepEqual(createVideoUploadPlan(4 * 1024 * 1024), {
+    chunkSize: 4 * 1024 * 1024,
+    totalChunkCount: 1
+  });
+
+  assert.deepEqual(createVideoUploadPlan(40 * 1024 * 1024), {
+    chunkSize: 40 * 1024 * 1024,
+    totalChunkCount: 1
+  });
+});
+
+test("large TikTok videos use floor chunk count so trailing bytes join the final chunk", () => {
+  const videoSize = 70 * 1024 * 1024 + 123;
+  const plan = createVideoUploadPlan(videoSize);
+
+  assert.deepEqual(plan, {
+    chunkSize: 10 * 1024 * 1024,
+    totalChunkCount: 7
+  });
+
+  const finalChunkSize = videoSize - plan.chunkSize * (plan.totalChunkCount - 1);
+  assert.equal(finalChunkSize, 10 * 1024 * 1024 + 123);
 });

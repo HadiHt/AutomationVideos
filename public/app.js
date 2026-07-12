@@ -7,7 +7,8 @@ const state = {
     currentTime: 0,
     paused: true
   },
-  lastJobSnapshot: null
+  lastJobSnapshot: null,
+  publishFormJobId: null
 };
 
 async function api(path, options = {}) {
@@ -343,7 +344,20 @@ function syncPublishForm() {
   const disableComment = document.getElementById("disable-comment");
   const disableDuet = document.getElementById("disable-duet");
   const disableStitch = document.getElementById("disable-stitch");
+  const consentCheckbox = document.getElementById("consent-checkbox");
+  const visibilityCheckbox = document.getElementById("visibility-checkbox");
   const publishButton = document.getElementById("publish-button");
+
+  const preserveValues = Boolean(job && state.publishFormJobId === job.id);
+  const formValues = {
+    title: publishTitle.value,
+    privacyLevel: privacySelect.value,
+    disableComment: disableComment.checked,
+    disableDuet: disableDuet.checked,
+    disableStitch: disableStitch.checked,
+    consent: consentCheckbox.checked,
+    visibilityNotice: visibilityCheckbox.checked
+  };
 
   privacySelect.innerHTML = `<option value="">Choose a privacy level manually</option>`;
   (creatorInfo?.privacy_level_options || []).forEach((option) => {
@@ -353,19 +367,23 @@ function syncPublishForm() {
     privacySelect.appendChild(node);
   });
 
-  if (job) {
-    publishTitle.value = job.title;
-  }
+  publishTitle.value = preserveValues ? formValues.title : job?.title || "";
+  privacySelect.value = preserveValues && Array.from(privacySelect.options).some((option) => option.value === formValues.privacyLevel)
+    ? formValues.privacyLevel
+    : "";
 
   disableComment.disabled = Boolean(creatorInfo?.comment_disabled);
   disableDuet.disabled = Boolean(creatorInfo?.duet_disabled);
   disableStitch.disabled = Boolean(creatorInfo?.stitch_disabled);
 
-  if (disableComment.disabled) disableComment.checked = true;
-  if (disableDuet.disabled) disableDuet.checked = true;
-  if (disableStitch.disabled) disableStitch.checked = true;
+  disableComment.checked = disableComment.disabled || (preserveValues && formValues.disableComment);
+  disableDuet.checked = disableDuet.disabled || (preserveValues && formValues.disableDuet);
+  disableStitch.checked = disableStitch.disabled || (preserveValues && formValues.disableStitch);
+  consentCheckbox.checked = preserveValues && formValues.consent;
+  visibilityCheckbox.checked = preserveValues && formValues.visibilityNotice;
 
   publishButton.disabled = !job || job.status !== "completed" || !creatorInfo;
+  state.publishFormJobId = job?.id || null;
 }
 
 function renderPublishHistory() {

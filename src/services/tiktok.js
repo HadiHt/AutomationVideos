@@ -11,6 +11,23 @@ function encodeForm(data) {
   return form;
 }
 
+function createTikTokApiError(body, fallbackMessage) {
+  const error = body?.error;
+  const message = error?.message || body?.error_description || body?.message || (typeof error === "string" ? error : fallbackMessage);
+  const code = typeof error === "object" ? error?.code : null;
+  const logId = error?.log_id || error?.logid || body?.log_id || body?.logid;
+  const details = [];
+
+  if (code && code !== "ok") {
+    details.push(`code: ${code}`);
+  }
+  if (logId) {
+    details.push(`log ID: ${logId}`);
+  }
+
+  return new Error(details.length ? `${message} (${details.join(", ")})` : message);
+}
+
 function sha256Hex(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
@@ -23,6 +40,27 @@ function randomPkce(length = 64) {
     output += alphabet[bytes[index] % alphabet.length];
   }
   return output;
+}
+
+export function createVideoUploadPlan(videoSize) {
+  if (!Number.isSafeInteger(videoSize) || videoSize <= 0) {
+    throw new Error("The TikTok video file is empty or has an invalid size.");
+  }
+
+  const maxSingleChunkSize = 64 * 1024 * 1024;
+  const standardChunkSize = 10 * 1024 * 1024;
+
+  if (videoSize <= maxSingleChunkSize) {
+    return {
+      chunkSize: videoSize,
+      totalChunkCount: 1
+    };
+  }
+
+  return {
+    chunkSize: standardChunkSize,
+    totalChunkCount: Math.floor(videoSize / standardChunkSize)
+  };
 }
 
 export class TiktokService {
@@ -190,7 +228,7 @@ export class TiktokService {
 
     const body = await response.json();
     if (!response.ok || body.error?.code && body.error.code !== "ok") {
-      throw new Error(body.error?.message || "TikTok creator info request failed.");
+      throw createTikTokApiError(body, "TikTok creator info request failed.");
     }
 
     const mergedAccount = {
@@ -232,8 +270,7 @@ export class TiktokService {
     }
 
     const fileStats = await fs.stat(job.output.videoPath);
-    const chunkSize = Math.min(Math.max(5 * 1024 * 1024, fileStats.size), 10 * 1024 * 1024);
-    const totalChunkCount = Math.ceil(fileStats.size / chunkSize);
+    const { chunkSize, totalChunkCount } = createVideoUploadPlan(fileStats.size);
 
     const initResponse = await fetch(`${this.config.tiktok.apiBaseUrl}/v2/post/publish/video/init/`, {
       method: "POST",
@@ -261,7 +298,7 @@ export class TiktokService {
 
     const initBody = await initResponse.json();
     if (!initResponse.ok || initBody.error?.code && initBody.error.code !== "ok") {
-      throw new Error(initBody.error?.message || "TikTok publish initialization failed.");
+      throw createTikTokApiError(initBody, "TikTok publish initialization failed.");
     }
 
     const uploadUrl = initBody.data?.upload_url;
@@ -272,8 +309,10 @@ export class TiktokService {
 
     const fileBuffer = await fs.readFile(job.output.videoPath);
     let offset = 0;
-    while (offset < fileBuffer.length) {
-      const chunk = fileBuffer.subarray(offset, Math.min(offset + chunkSize, fileBuffer.length));
+    for (let chunkIndex = 0; chunkIndex < totalChunkCount; chunkIndex += 1) {
+      const isFinalChunk = chunkIndex === totalChunkCount - 1;
+      const chunkEnd = isFinalChunk ? fileBuffer.length : offset + chunkSize;
+      const chunk = fileBuffer.subarray(offset, chunkEnd);
       const uploadResponse = await fetch(uploadUrl, {
         method: "PUT",
         headers: {
@@ -290,6 +329,10 @@ export class TiktokService {
       }
 
       offset += chunk.length;
+    }
+
+    if (offset !== fileBuffer.length) {
+      throw new Error("TikTok upload did not consume the complete video file.");
     }
 
     return {
@@ -312,7 +355,7 @@ export class TiktokService {
 
     const body = await response.json();
     if (!response.ok || body.error?.code && body.error.code !== "ok") {
-      throw new Error(body.error?.message || "TikTok publish status request failed.");
+      throw createTikTokApiError(body, "TikTok publish status request failed.");
     }
 
     return body.data;
