@@ -54,11 +54,22 @@ function buildSceneChunks(sentences, minScenes, maxScenes) {
 }
 
 function buildCaptionChunks(text, wordsPerChunk) {
-  const words = text.split(/\s+/).map((item) => item.trim()).filter(Boolean);
   const chunks = [];
-  for (let index = 0; index < words.length; index += wordsPerChunk) {
-    chunks.push(words.slice(index, index + wordsPerChunk).join(" "));
+
+  for (const sentence of splitIntoSentences(text)) {
+    const words = sentence.split(/\s+/).map((item) => item.trim()).filter(Boolean);
+    const chunkCount = Math.max(1, Math.ceil(words.length / wordsPerChunk));
+    const baseChunkSize = Math.floor(words.length / chunkCount);
+    const largerChunkCount = words.length % chunkCount;
+    let cursor = 0;
+
+    for (let index = 0; index < chunkCount; index += 1) {
+      const chunkSize = baseChunkSize + (index < largerChunkCount ? 1 : 0);
+      chunks.push(words.slice(cursor, cursor + chunkSize).join(" "));
+      cursor += chunkSize;
+    }
   }
+
   return chunks;
 }
 
@@ -70,27 +81,32 @@ function buildCaptionTimeline(chunks, audioDurationSec) {
   const weightedChunks = chunks.map((text) => {
     const words = text.split(/\s+/).filter(Boolean);
     const characters = text.replace(/\s+/g, "").length;
+    const commaPauses = (text.match(/[,;]/g) || []).length;
+    const sentencePauses = (text.match(/[.!?]/g) || []).length;
+    const clausePauses = (text.match(/[:—–]/g) || []).length;
     return {
       text,
-      weight: Math.max(1, words.length * 1.15 + characters * 0.035)
+      weight: Math.max(
+        0.1,
+        words.length * 0.18 +
+          characters * 0.012 +
+          commaPauses * 0.14 +
+          clausePauses * 0.18 +
+          sentencePauses * 0.28
+      )
     };
   });
 
   const totalWeight = weightedChunks.reduce((sum, chunk) => sum + chunk.weight, 0);
-  const leadInSec = 0.08;
-  const endHoldSec = 0.24;
   const maxEnd = Math.max(audioDurationSec, 0.1);
-  let cursor = leadInSec;
+  const minimumDuration = Math.min(0.45, maxEnd / weightedChunks.length);
+  const weightedDuration = Math.max(0, maxEnd - minimumDuration * weightedChunks.length);
+  let cursor = 0;
 
   return weightedChunks.map((chunk, index) => {
-    const rawDuration = (chunk.weight / totalWeight) * maxEnd;
-    const duration = Math.max(0.9, rawDuration + endHoldSec);
-    const startSec = index === 0 ? 0 : Math.max(0, cursor - 0.04);
-    let endSec = Math.min(maxEnd, startSec + duration);
-
-    if (index === weightedChunks.length - 1) {
-      endSec = maxEnd;
-    }
+    const duration = minimumDuration + (chunk.weight / totalWeight) * weightedDuration;
+    const startSec = cursor;
+    const endSec = index === weightedChunks.length - 1 ? maxEnd : Math.min(maxEnd, startSec + duration);
 
     cursor = endSec;
 
@@ -108,8 +124,28 @@ function wavDurationSeconds(buffer) {
     throw new Error("Generated Piper output is not a valid WAV file.");
   }
 
-  const byteRate = buffer.readUInt32LE(28);
-  const dataSize = buffer.readUInt32LE(40);
+  let byteRate = 0;
+  let dataSize = 0;
+  let offset = 12;
+
+  while (offset + 8 <= buffer.length) {
+    const chunkId = buffer.toString("ascii", offset, offset + 4);
+    const chunkSize = buffer.readUInt32LE(offset + 4);
+    const chunkDataOffset = offset + 8;
+
+    if (chunkId === "fmt " && chunkSize >= 12 && chunkDataOffset + 12 <= buffer.length) {
+      byteRate = buffer.readUInt32LE(chunkDataOffset + 8);
+    } else if (chunkId === "data") {
+      dataSize = Math.min(chunkSize, Math.max(0, buffer.length - chunkDataOffset));
+    }
+
+    if (byteRate && dataSize) {
+      break;
+    }
+
+    offset = chunkDataOffset + chunkSize + (chunkSize % 2);
+  }
+
   if (!byteRate || !dataSize) {
     throw new Error("Generated WAV file is missing duration metadata.");
   }
@@ -323,12 +359,13 @@ export class PipelineService {
       throw new Error("PIPER_MODEL_PATH is not configured.");
     }
 
+    const rawOutputPath = outputPath.replace(/\.wav$/i, ".raw.wav");
     const args = [
       ...this.config.pipeline.piperArgs,
       "--model",
       this.config.pipeline.piperModelPath,
       "--output_file",
-      outputPath
+      rawOutputPath
     ];
 
     if (this.config.pipeline.piperVoiceConfigPath) {
@@ -338,6 +375,33 @@ export class PipelineService {
     await runCommand(this.config.pipeline.piperExecutable, args, {
       stdin: scriptText
     });
+
+    if (!this.config.pipeline.voiceMasteringEnabled) {
+      await fs.rename(rawOutputPath, outputPath);
+      return;
+    }
+
+    try {
+      await runCommand(this.config.pipeline.ffmpegExecutable, [
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        rawOutputPath,
+        "-af",
+        this.config.pipeline.voiceMasteringFilter,
+        "-ar",
+        "48000",
+        "-ac",
+        "1",
+        "-c:a",
+        "pcm_s16le",
+        outputPath
+      ]);
+    } finally {
+      await fs.rm(rawOutputPath, { force: true });
+    }
   }
 
   async generateImages(job, scenes) {

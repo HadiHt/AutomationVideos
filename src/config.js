@@ -111,6 +111,11 @@ export async function loadConfig() {
       piperArgs: parseJsonEnv("PIPER_ARGS_JSON", []),
       piperModelPath: process.env.PIPER_MODEL_PATH || "",
       piperVoiceConfigPath: process.env.PIPER_VOICE_CONFIG_PATH || "",
+      voiceMasteringEnabled: process.env.VOICE_MASTERING_ENABLED !== "false",
+      voiceMasteringFilter:
+        process.env.VOICE_MASTERING_FILTER ||
+        "highpass=f=70,lowpass=f=10500,acompressor=threshold=-18dB:ratio=2.5:attack=20:release=180:makeup=1.5,loudnorm=I=-16:LRA=7:TP=-1.5",
+      ffmpegExecutable: process.env.FFMPEG_EXECUTABLE || "ffmpeg",
       comfyuiBaseUrl: process.env.COMFYUI_BASE_URL || "http://127.0.0.1:8188",
       rendererPythonExecutable: process.env.RENDERER_PYTHON_EXECUTABLE || "python",
       musicPath: process.env.BACKGROUND_MUSIC_PATH || "",
